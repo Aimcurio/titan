@@ -20,6 +20,208 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, io::Write};
 
+/// A distinct read request has no write payload, action, retry, or history mutation surface.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureReadRequestV1 {
+    pub profile: String,
+    pub admission_bytes: Vec<u8>,
+    pub admission_digest: String,
+    pub admission_id: String,
+    pub project_id: String,
+    pub project_digest: String,
+    pub actor_id: String,
+    pub actor_digest: String,
+    pub contract_id: String,
+    pub contract_digest: String,
+    pub authority_state_id: String,
+    pub target_id: String,
+    pub target_state_id: String,
+    pub capability: String,
+    pub operation: String,
+    pub resource: String,
+    pub handler: String,
+    pub case_id: String,
+    pub relative_marker: String,
+    pub expected_content_digest: String,
+    pub gate_ref: String,
+}
+
+/// Observed text/JSON claims remain untrusted bytes, never approvals or executable handles.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct FixtureReadObservationV1 {
+    pub namespace: String,
+    pub trust: String,
+    pub resource: String,
+    pub bytes: Vec<u8>,
+    pub content_digest: String,
+    pub observation_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct FixtureReadResultV1 {
+    pub namespace: String,
+    pub handler: String,
+    pub handler_invocations: u32,
+    pub admission_id: String,
+    pub revalidated_admission_digest: Option<String>,
+    pub outcome: OutcomeVariant,
+    pub observation: Option<FixtureReadObservationV1>,
+    pub detail: String,
+}
+
+fn validate_read_request(
+    r: &FixtureReadRequestV1,
+    admission: &FixtureAdmissionV1,
+    current: &FixtureAdmissionInput<'_>,
+) -> FixtureResult<()> {
+    if r.profile != PROFILE
+        || r.capability != capability::READ_CAPABILITY
+        || r.operation != capability::READ_OPERATION
+        || r.handler != capability::READ_HANDLER
+    {
+        return Err(fail(
+            BlockedCode::Unauthorized,
+            "F05 exact read tuple mismatch",
+        ));
+    }
+    if r.admission_bytes.len() > 65536
+        || r.admission_bytes != admission.canonical_bytes()?
+        || r.admission_id != admission.admission_id()
+        || r.admission_digest != hash(b"TITAN-FWD-F05\0admission-bytes-v1\0", &r.admission_bytes)
+    {
+        return Err(invalid("F05 read admission identity mismatch"));
+    }
+    let v: serde_json::Value = serde_json::from_slice(&r.admission_bytes)
+        .map_err(|_| invalid("F05 read admission bytes"))?;
+    for (field, expected) in [
+        ("project_id", &r.project_id),
+        ("project_digest", &r.project_digest),
+        ("actor_id", &r.actor_id),
+        ("actor_digest", &r.actor_digest),
+        ("contract_id", &r.contract_id),
+        ("contract_digest", &r.contract_digest),
+        ("authority_state_id", &r.authority_state_id),
+        ("target_id", &r.target_id),
+        ("target_state_id", &r.target_state_id),
+        ("capability", &r.capability),
+        ("operation", &r.operation),
+    ] {
+        if v[field].as_str() != Some(expected.as_str()) {
+            return Err(invalid("F05 read admission attribution mismatch"));
+        }
+    }
+    if current.requested_read_scopes.len() != 1
+        || !current.requested_mutation_scopes.is_empty()
+        || current.requested_read_scopes[0].match_kind != ResourceMatch::Exact
+        || current.requested_read_scopes[0].resource_ref != r.resource
+        || current
+            .authority_state
+            .profile
+            .canonical_resource(&r.resource)
+            .ok()
+            .as_ref()
+            != Some(&r.resource)
+    {
+        return Err(fail(
+            BlockedCode::ScopeViolation,
+            "F05 requires one exact canonical read scope",
+        ));
+    }
+    let RecordPayload::ExecutionContract(contract) = &current.contract.record().payload else {
+        return Err(invalid("F05 read F01 contract required"));
+    };
+    let digest_ok = r
+        .expected_content_digest
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        });
+    if !capability::slug(&r.case_id)
+        || !id(&r.gate_ref, "gate")
+        || !contract.verification_gate_refs.contains(&r.gate_ref)
+        || !digest_ok
+        || current.network_requested
+        || current.secret_requested
+        || current.cross_surface_requested
+    {
+        return Err(invalid("F05 read context or forbidden access"));
+    }
+    Ok(())
+}
+
+/// Pure fixture observation: no F04 store, pending/effect entry, or writer is reachable here.
+pub fn read_fixture_operation(
+    r: &FixtureReadRequestV1,
+    admission: &FixtureAdmissionV1,
+    current: &FixtureAdmissionInput<'_>,
+) -> FixtureReadResultV1 {
+    let mut result = FixtureReadResultV1 {
+        namespace: "FIXTURE".into(),
+        handler: capability::READ_HANDLER.into(),
+        handler_invocations: 0,
+        admission_id: r.admission_id.clone(),
+        revalidated_admission_digest: None,
+        outcome: OutcomeVariant::Blocked(BlockedCode::Unauthorized),
+        observation: None,
+        detail: "read not authorized".into(),
+    };
+    let attempt = (|| -> FixtureResult<FixtureReadObservationV1> {
+        validate_read_request(r, admission, current)?;
+        let path = capability::fixture_marker_path(&r.case_id, &r.resource, &r.relative_marker)?;
+        // Complete qualified F03 freshness immediately precedes the only closed read handler.
+        revalidate_fixture_admission(admission, current)?;
+        result.revalidated_admission_digest = Some(r.admission_digest.clone());
+        result.handler_invocations = 1;
+        let bytes = capability::read_fixture_marker(&path)?;
+        let content_digest = hash(b"", &bytes);
+        if content_digest != r.expected_content_digest {
+            return Err(fail(
+                BlockedCode::PreconditionDrift,
+                "F05 read content changed",
+            ));
+        }
+        let identity = serde_json::to_vec(&(
+            PROFILE,
+            capability::READ_CAPABILITY,
+            capability::READ_OPERATION,
+            capability::READ_HANDLER,
+            &r.admission_id,
+            &r.admission_digest,
+            &r.resource,
+            &content_digest,
+        ))
+        .map_err(|_| invalid("F05 read identity encoding"))?;
+        Ok(FixtureReadObservationV1 {
+            namespace: "FIXTURE".into(),
+            trust: "UNTRUSTED_FIXTURE_DATA".into(),
+            resource: r.resource.clone(),
+            bytes,
+            content_digest,
+            observation_id: format!(
+                "fx:read-observation:{}",
+                hash(b"TITAN-FWD-F05\0read-observation-v1\0", &identity)
+                    .trim_start_matches("sha256:")
+            ),
+        })
+    })();
+    match attempt {
+        Ok(observation) => {
+            result.outcome = OutcomeVariant::Pass(PassCode::WorkCompleted);
+            result.observation = Some(observation);
+            result.detail = "inert read observation; no effect or write authority".into();
+        }
+        Err(e) => {
+            result.outcome = OutcomeVariant::Blocked(e.code);
+            result.detail = e.reason.into();
+        }
+    }
+    result
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixtureBrokerRequestV1 {

@@ -1053,3 +1053,605 @@ fn a05_guard_pending_intent_blocks_changed_identity_and_step() {
     h.request.logical_step = "changed-step".into();
     h.reject(BlockedCode::PreconditionDrift);
 }
+
+// F05-A1 additions only. The original 36 tests and their harness remain unchanged.
+use titan_kernel::{
+    broker::{FixtureReadRequestV1, FixtureReadResultV1, read_fixture_operation},
+    capability::{READ_CAPABILITY, READ_HANDLER, READ_OPERATION, fixture_capabilities_v1},
+};
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+struct ReadInventoryEntry {
+    path: String,
+    kind: String,
+    len: u64,
+    digest: String,
+    modified_ns: u128,
+    readonly: bool,
+    attributes: u32,
+}
+
+fn read_inventory_path(path: &std::path::Path, rows: &mut Vec<ReadInventoryEntry>) {
+    let m = match fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            rows.push(ReadInventoryEntry {
+                path: path.to_string_lossy().into(),
+                kind: "ABSENT".into(),
+                len: 0,
+                digest: String::new(),
+                modified_ns: 0,
+                readonly: false,
+                attributes: 0,
+            });
+            return;
+        }
+        Err(e) => panic!("inventory failed: {e}"),
+    };
+    #[cfg(windows)]
+    let attributes = {
+        use std::os::windows::fs::MetadataExt;
+        m.file_attributes()
+    };
+    #[cfg(not(windows))]
+    let attributes = 0;
+    let reparse = m.file_type().is_symlink() || attributes & 0x400 != 0;
+    let kind = if reparse {
+        "REPARSE"
+    } else if m.is_dir() {
+        "DIRECTORY"
+    } else {
+        "FILE"
+    };
+    rows.push(ReadInventoryEntry {
+        path: path.to_string_lossy().into(),
+        kind: kind.into(),
+        len: m.len(),
+        digest: if reparse {
+            fs::read_link(path).unwrap().to_string_lossy().into()
+        } else if m.is_file() {
+            hash(b"", &fs::read(path).unwrap())
+        } else {
+            String::new()
+        },
+        modified_ns: m
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        readonly: m.permissions().readonly(),
+        attributes,
+    });
+    if m.is_dir() && !reparse {
+        let mut children = fs::read_dir(path)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect::<Vec<_>>();
+        children.sort();
+        for child in children {
+            read_inventory_path(&child, rows);
+        }
+    }
+}
+
+struct ReadHarness {
+    broker: BrokerHarness,
+    request: FixtureReadRequestV1,
+    expected: Vec<u8>,
+    calls: std::cell::Cell<u32>,
+    write_admission: titan_kernel::admission::FixtureAdmissionV1,
+}
+impl ReadHarness {
+    fn new(name: &str) -> Self {
+        let mut broker = BrokerHarness::new(&format!("a1-{name}"));
+        let write_admission = broker.admission.clone();
+        let resource = broker.request.resource.clone();
+        let f = &mut broker.foundation;
+        let RecordPayload::ExecutionContract(old) = &f.contract.record().payload else {
+            unreachable!()
+        };
+        let mut c = old.clone();
+        c.capability_code = READ_CAPABILITY.into();
+        c.allowed_operations = vec![READ_OPERATION.into()];
+        c.read_scopes = vec![resource.clone()];
+        c.allowed_mutations.clear();
+        f.contract = record(RecordPayload::ExecutionContract(c));
+        f.expected_digest = f.contract.record().integrity.clone();
+        f.read = vec![scope(&resource, ResourceMatch::Exact)];
+        f.mutation.clear();
+        f.capability = READ_CAPABILITY.into();
+        f.operation = READ_OPERATION.into();
+        f.refresh_resolution();
+        broker.admission = evaluate_fixture_admission(&f.input()).unwrap();
+        let admission_bytes = broker.admission.canonical_bytes().unwrap();
+        let expected = br#"{"namespace":"FIXTURE","observation":"synthetic-read-only"}"#.to_vec();
+        fs::write(broker.path(), &expected).unwrap(); // fixture setup, never the read handler
+        let request = FixtureReadRequestV1 {
+            profile: PROFILE.into(),
+            admission_digest: hash(b"TITAN-FWD-F05\0admission-bytes-v1\0", &admission_bytes),
+            admission_bytes,
+            admission_id: broker.admission.admission_id().into(),
+            project_id: broker.request.project_id.clone(),
+            project_digest: broker.request.project_digest.clone(),
+            actor_id: broker.request.actor_id.clone(),
+            actor_digest: broker.request.actor_digest.clone(),
+            contract_id: broker.foundation.expected_id.clone(),
+            contract_digest: broker.foundation.expected_digest.clone(),
+            authority_state_id: broker.foundation.state.state_id.clone(),
+            target_id: broker.foundation.policy.target_id.clone(),
+            target_state_id: broker.admission.target_state_id().into(),
+            capability: READ_CAPABILITY.into(),
+            operation: READ_OPERATION.into(),
+            resource,
+            handler: READ_HANDLER.into(),
+            case_id: broker.store.case_id().into(),
+            relative_marker: "markers/marker.json".into(),
+            expected_content_digest: hash(b"", &expected),
+            gate_ref: "fx:gate:ready".into(),
+        };
+        Self {
+            broker,
+            request,
+            expected,
+            calls: std::cell::Cell::new(0),
+            write_admission,
+        }
+    }
+    fn inventory(&self) -> Vec<ReadInventoryEntry> {
+        // Entire owned read domain plus all admitted target/history dependencies, not just marker bytes.
+        // Other full-suite tests own different cases and can run concurrently.
+        let mut rows = Vec::new();
+        for path in [
+            PathBuf::from(F05_ROOT)
+                .join("cases")
+                .join(self.broker.store.case_id()),
+            self.broker.store.case_path().to_owned(),
+            self.broker.foundation.marker_path.clone(),
+        ] {
+            read_inventory_path(&path, &mut rows);
+        }
+        rows.sort_by(|a, b| a.path.cmp(&b.path));
+        rows
+    }
+    fn captured<T: serde::Serialize>(&self, invoke: impl FnOnce() -> T) -> T {
+        let before = self.inventory();
+        let value = invoke();
+        let after = self.inventory();
+        let ordinal = self.calls.get() + 1;
+        self.calls.set(ordinal);
+        let evidence = PathBuf::from(F05_ROOT)
+            .parent()
+            .unwrap()
+            .join("f05-evidence/a1-zero-effects")
+            .join(self.broker.store.case_id());
+        fs::create_dir_all(&evidence).unwrap();
+        let record = serde_json::json!({
+            "case": self.broker.store.case_id(), "call": ordinal, "before": before, "after": after,
+            "effects": if before == after { Vec::<String>::new() } else { vec!["INVENTORY_MISMATCH".into()] },
+            "result": value,
+        });
+        fs::write(
+            evidence.join(format!("{ordinal:03}.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            before, after,
+            "read or rejected routing must have zero fixture effect"
+        );
+        value
+    }
+    fn read(&self) -> FixtureReadResultV1 {
+        self.captured(|| {
+            read_fixture_operation(
+                &self.request,
+                &self.broker.admission,
+                &self.broker.foundation.input(),
+            )
+        })
+    }
+    fn reject(&self, code: BlockedCode) -> FixtureReadResultV1 {
+        let r = self.read();
+        assert_eq!(r.outcome, OutcomeVariant::Blocked(code), "{r:?}");
+        assert!(r.observation.is_none());
+        r
+    }
+    fn success(&self) -> FixtureReadResultV1 {
+        let r = self.read();
+        assert_eq!(r.outcome, OutcomeVariant::Pass(PassCode::WorkCompleted));
+        assert_eq!(r.handler_invocations, 1);
+        assert_eq!(
+            r.revalidated_admission_digest.as_deref(),
+            Some(self.request.admission_digest.as_str())
+        );
+        let observation = r.observation.as_ref().unwrap();
+        assert_eq!(observation.bytes, self.expected);
+        assert_eq!(observation.resource, self.request.resource);
+        assert_eq!(observation.content_digest, hash(b"", &self.expected));
+        assert_eq!(observation.trust, "UNTRUSTED_FIXTURE_DATA");
+        assert_eq!(observation.namespace, "FIXTURE");
+        r
+    }
+}
+
+#[test]
+fn a05_a1_01_exact_read_returns_inert_observation() {
+    let h = ReadHarness::new("01");
+    let first = h.success();
+    assert_eq!(
+        first,
+        h.success(),
+        "identical basis has deterministic observation identity"
+    );
+    assert!(
+        replay_fixture_history(&h.broker.store)
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+}
+#[test]
+fn a05_a1_02_full_inventory_empty_including_metadata() {
+    let h = ReadHarness::new("02");
+    let before = h.inventory();
+    h.success();
+    assert_eq!(before, h.inventory());
+}
+#[test]
+fn a05_a1_03_read_cannot_create_missing_marker() {
+    let h = ReadHarness::new("03");
+    fs::rename(
+        h.broker.path(),
+        h.broker.path().with_file_name("saved.json"),
+    )
+    .unwrap();
+    h.reject(BlockedCode::InsufficientEvidence);
+    assert!(!h.broker.path().exists());
+}
+#[test]
+fn a05_a1_04_read_operation_write_handler_rejected() {
+    let mut h = ReadHarness::new("04");
+    h.request.handler = HANDLER.into();
+    assert_eq!(h.reject(BlockedCode::Unauthorized).handler_invocations, 0);
+    h.broker.request.capability = READ_CAPABILITY.into();
+    h.broker.request.operation = READ_OPERATION.into();
+    let result = h.captured(|| h.broker.call(FixtureFaultV1::None));
+    assert_eq!(result.handler_invocations, 0);
+    assert_eq!(
+        result.outcome,
+        OutcomeVariant::Blocked(BlockedCode::Unauthorized)
+    );
+}
+#[test]
+fn a05_a1_05_write_operation_read_handler_rejected() {
+    let mut h = ReadHarness::new("05");
+    h.request.operation = OPERATION.into();
+    assert_eq!(h.reject(BlockedCode::Unauthorized).handler_invocations, 0);
+    h.broker.request.handler = READ_HANDLER.into();
+    let result = h.captured(|| h.broker.call(FixtureFaultV1::None));
+    assert_eq!(result.handler_invocations, 0);
+    assert_eq!(
+        result.outcome,
+        OutcomeVariant::Blocked(BlockedCode::Unauthorized)
+    );
+}
+#[test]
+fn a05_a1_06_read_capability_cannot_widen_to_write() {
+    let mut h = ReadHarness::new("06");
+    h.request.operation = OPERATION.into();
+    h.request.handler = HANDLER.into();
+    h.reject(BlockedCode::Unauthorized);
+    h.broker.request.capability = READ_CAPABILITY.into();
+    let r = h.captured(|| h.broker.call(FixtureFaultV1::None));
+    assert_eq!(r.handler_invocations, 0);
+    assert_eq!(
+        r.outcome,
+        OutcomeVariant::Blocked(BlockedCode::Unauthorized)
+    );
+}
+#[test]
+fn a05_a1_07_out_of_scope_resource_rejected() {
+    let mut h = ReadHarness::new("07");
+    h.request.resource = format!("{RESOURCE}/other/marker");
+    assert_eq!(h.reject(BlockedCode::ScopeViolation).handler_invocations, 0);
+}
+#[test]
+fn a05_a1_08_f03_target_drift_rejected() {
+    let h = ReadHarness::new("08");
+    let mut m: FixtureTargetMarkerV1 =
+        serde_json::from_slice(&fs::read(&h.broker.foundation.marker_path).unwrap()).unwrap();
+    m.revision = "r2".into();
+    fs::write(
+        &h.broker.foundation.marker_path,
+        serde_json::to_vec(&m).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        h.reject(BlockedCode::PreconditionDrift).handler_invocations,
+        0
+    );
+}
+#[test]
+fn a05_a1_09_stale_admission_rejected() {
+    let mut h = ReadHarness::new("09");
+    h.broker.foundation.preconditions.conditions[0].fixture_revision = "r2".into();
+    assert_eq!(
+        h.reject(BlockedCode::PreconditionDrift).handler_invocations,
+        0
+    );
+}
+#[test]
+fn a05_a1_10_path_escape_and_alias_rejected() {
+    let mut h = ReadHarness::new("10");
+    for path in [
+        "../marker.json",
+        "C:/marker.json",
+        "markers/%2fmarker.json",
+        "markers/other.json",
+    ] {
+        h.request.relative_marker = path.into();
+        assert_eq!(
+            h.reject(BlockedCode::TargetIdentityMismatch)
+                .handler_invocations,
+            0
+        );
+    }
+    h.request.resource = "fixture://alias/lab/marker".into();
+    h.reject(BlockedCode::ScopeViolation);
+}
+#[test]
+fn a05_a1_11_real_reparse_directory_rejected() {
+    let h = ReadHarness::new("11");
+    let markers = h.broker.path().parent().unwrap().to_owned();
+    let saved = markers.with_file_name("saved-markers");
+    fs::rename(&markers, &saved).unwrap();
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&markers)
+            .arg(&saved)
+            .output()
+            .unwrap();
+        assert!(
+            status.status.success(),
+            "test-owned junction setup failed: {status:?}"
+        );
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(&saved, &markers).unwrap();
+    assert_eq!(
+        h.reject(BlockedCode::TargetIdentityMismatch)
+            .handler_invocations,
+        0
+    );
+    // Test-owned link teardown is outside captured reader invocation; no target bytes are removed.
+    #[cfg(windows)]
+    fs::remove_dir(&markers).unwrap();
+    #[cfg(not(windows))]
+    fs::remove_file(&markers).unwrap();
+    fs::rename(&saved, &markers).unwrap();
+}
+#[test]
+fn a05_a1_12_exact_context_and_tuple_rejected() {
+    for field in [
+        "project",
+        "actor",
+        "contract",
+        "target",
+        "capability",
+        "operation",
+        "admission",
+        "gate",
+    ] {
+        let mut h = ReadHarness::new(&format!("12-{field}"));
+        let code = match field {
+            "project" => {
+                h.request.project_id = "fx:project:wrong".into();
+                BlockedCode::ContractInvalid
+            }
+            "actor" => {
+                h.request.actor_id = "fx:actor:wrong".into();
+                BlockedCode::ContractInvalid
+            }
+            "contract" => {
+                h.request.contract_digest = ZERO.into();
+                BlockedCode::ContractInvalid
+            }
+            "target" => {
+                h.request.target_id = "fx:target:wrong".into();
+                BlockedCode::ContractInvalid
+            }
+            "admission" => {
+                h.request.admission_digest = ZERO.into();
+                BlockedCode::ContractInvalid
+            }
+            "gate" => {
+                h.request.gate_ref = "fx:gate:wrong".into();
+                BlockedCode::ContractInvalid
+            }
+            "capability" => {
+                h.request.capability = CAPABILITY.into();
+                BlockedCode::Unauthorized
+            }
+            "operation" => {
+                h.request.operation = OPERATION.into();
+                BlockedCode::Unauthorized
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(h.reject(code).handler_invocations, 0);
+    }
+}
+#[test]
+fn a05_a1_13_claimed_approval_verification_promotion_is_untrusted() {
+    let mut h = ReadHarness::new("13");
+    h.expected =
+        br#"{"approval":"APPROVED","verification":"PASS","promotion":"CANONICAL","grant":"WRITE"}"#
+            .to_vec();
+    fs::write(h.broker.path(), &h.expected).unwrap();
+    h.request.expected_content_digest = hash(b"", &h.expected);
+    let r = h.success();
+    let json = serde_json::to_value(&r).unwrap();
+    for field in [
+        "grant",
+        "approval",
+        "verification",
+        "promotion",
+        "executor",
+        "token",
+        "handle",
+    ] {
+        assert!(json.get(field).is_none());
+        assert!(json["observation"].get(field).is_none());
+    }
+    assert!(serde_json::from_slice::<FixtureReadRequestV1>(&h.expected).is_err());
+    assert!(decode_fixture_admission(&h.expected, &h.broker.foundation.input()).is_err());
+}
+#[test]
+fn a05_a1_14_restart_replay_no_write_action() {
+    let h = ReadHarness::new("14");
+    let first = h.success();
+    let before = h.inventory();
+    let reopened =
+        FixtureStoreV1::open(h.broker.store.case_id(), &h.broker.foundation.seed).unwrap();
+    let history = replay_fixture_history(&reopened).unwrap();
+    assert!(history.entries.is_empty());
+    assert!(history.effects.is_empty());
+    assert_eq!(first, h.success());
+    assert_eq!(before, h.inventory());
+    let mut attempted = h.broker.request.clone();
+    attempted.admission_bytes = h.request.admission_bytes.clone();
+    attempted.admission_id = h.request.admission_id.clone();
+    attempted.admission_digest = h.request.admission_digest.clone();
+    let r = h.captured(|| {
+        dispatch_fixture_operation(
+            &reopened,
+            &attempted,
+            &h.broker.admission,
+            &h.broker.foundation.input(),
+            FixtureFaultV1::None,
+        )
+    });
+    assert_eq!(r.handler_invocations, 0);
+    assert_eq!(
+        r.outcome,
+        OutcomeVariant::Blocked(BlockedCode::ContractInvalid)
+    );
+}
+#[test]
+fn a05_a1_15_write_admission_never_substitutes_for_read() {
+    let mut h = ReadHarness::new("15");
+    h.broker.admission = h.write_admission.clone();
+    h.request.admission_bytes = h.broker.admission.canonical_bytes().unwrap();
+    h.request.admission_digest = hash(
+        b"TITAN-FWD-F05\0admission-bytes-v1\0",
+        &h.request.admission_bytes,
+    );
+    h.request.admission_id = h.broker.admission.admission_id().into();
+    assert_eq!(
+        h.reject(BlockedCode::ContractInvalid).handler_invocations,
+        0
+    );
+}
+#[test]
+fn a05_a1_16_current_project_actor_contract_drift_rejected() {
+    for field in ["project", "actor", "contract"] {
+        let mut h = ReadHarness::new(&format!("16-{field}"));
+        match field {
+            "project" => {
+                let RecordPayload::ProjectBinding(p) =
+                    &h.broker.foundation.project.record().payload
+                else {
+                    unreachable!()
+                };
+                let mut p = p.clone();
+                p.binding_revision += 1;
+                h.broker.foundation.project = record(RecordPayload::ProjectBinding(p));
+            }
+            "actor" => {
+                let RecordPayload::ActorBinding(a) = &h.broker.foundation.actor.record().payload
+                else {
+                    unreachable!()
+                };
+                let mut a = a.clone();
+                a.valid_until_ms = Some(3);
+                h.broker.foundation.actor = record(RecordPayload::ActorBinding(a));
+            }
+            "contract" => {
+                let RecordPayload::ExecutionContract(c) =
+                    &h.broker.foundation.contract.record().payload
+                else {
+                    unreachable!()
+                };
+                let mut c = c.clone();
+                c.allowed_operations = vec![OPERATION.into()];
+                h.broker.foundation.contract = record(RecordPayload::ExecutionContract(c));
+            }
+            _ => unreachable!(),
+        }
+        let r = h.read();
+        assert!(matches!(r.outcome, OutcomeVariant::Blocked(_)));
+        assert_eq!(r.handler_invocations, 0);
+    }
+}
+#[test]
+fn a05_a1_17_marker_content_drift_rejected() {
+    let h = ReadHarness::new("17");
+    fs::write(h.broker.path(), b"changed fixture content").unwrap();
+    assert_eq!(
+        h.reject(BlockedCode::PreconditionDrift).handler_invocations,
+        1
+    );
+}
+#[test]
+fn a05_a1_18_closed_registry_and_no_mutation_requests() {
+    let mut h = ReadHarness::new("18");
+    let registry = fixture_capabilities_v1();
+    assert_eq!(registry.len(), 2);
+    assert_eq!(registry[0], fixture_capability_v1());
+    assert_eq!(registry[1].capability, READ_CAPABILITY);
+    assert_eq!(registry[1].operation, READ_OPERATION);
+    assert_eq!(registry[1].handler, READ_HANDLER);
+    assert_eq!(registry[1].write_shape, "NONE");
+    assert_ne!(registry[0].capability, registry[1].capability);
+    assert!(
+        !registry[1].network
+            && !registry[1].secrets
+            && !registry[1].processes
+            && !registry[1].cross_surface
+    );
+    h.broker.foundation.mutation = vec![scope(&h.request.resource, ResourceMatch::Exact)];
+    assert_eq!(h.reject(BlockedCode::ScopeViolation).handler_invocations, 0);
+    let mut value = serde_json::to_value(&h.request).unwrap();
+    value["write_handle"] = "not allowed".into();
+    assert!(serde_json::from_value::<FixtureReadRequestV1>(value).is_err());
+}
+#[test]
+fn a05_a1_19_authority_drift_and_forbidden_access_rejected() {
+    let mut h = ReadHarness::new("19");
+    add_claim(
+        &mut h.broker.foundation.state,
+        &h.broker.foundation.seed,
+        "a1-new-read-claim",
+        READ_OPERATION,
+        "READ_RESOURCE",
+        RESOURCE,
+        Provision::Permit,
+    );
+    assert_eq!(h.reject(BlockedCode::AuthorityStale).handler_invocations, 0);
+    for field in ["network", "secret", "cross"] {
+        let mut h = ReadHarness::new(&format!("19-{field}"));
+        match field {
+            "network" => h.broker.foundation.network = true,
+            "secret" => h.broker.foundation.secret = true,
+            "cross" => h.broker.foundation.cross_surface = true,
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            h.reject(BlockedCode::ContractInvalid).handler_invocations,
+            0
+        );
+    }
+}

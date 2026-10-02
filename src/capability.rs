@@ -17,6 +17,9 @@ pub const CAPABILITY: &str = "FIXTURE_OPERATION";
 pub const OPERATION: &str = "UPDATE";
 pub const HANDLER: &str = "CREATE_FIXTURE_MARKER_V1";
 pub const EFFECT: &str = "MUTATE_RESOURCE";
+pub const READ_CAPABILITY: &str = "FIXTURE_READ_ONLY";
+pub const READ_OPERATION: &str = "READ";
+pub const READ_HANDLER: &str = "READ_FIXTURE_MARKER_V1";
 pub const F05_ROOT: &str =
     r"C:\Users\15103\Documents\Codex\2026-09-29\files-pasted-by-the-user-titan\work\f05-fixtures";
 
@@ -50,6 +53,34 @@ pub fn fixture_capability_v1() -> FixtureCapabilityV1 {
         processes: false,
         cross_surface: false,
     }
+}
+
+/// Exactly two closed tuples. Registry availability does not grant either operation.
+pub fn fixture_capabilities_v1() -> [FixtureCapabilityV1; 2] {
+    let read = FixtureCapabilityV1 {
+        profile: PROFILE.into(),
+        capability: READ_CAPABILITY.into(),
+        operation: READ_OPERATION.into(),
+        handler: READ_HANDLER.into(),
+        effect: "READ_RESOURCE".into(),
+        write_shape: "NONE".into(),
+        resource_mapping:
+            "fixture://resource/lab/<case>/<leaf> -> cases/<case>/markers/<leaf>.json".into(),
+        network: false,
+        secrets: false,
+        processes: false,
+        cross_surface: false,
+    };
+    [fixture_capability_v1(), read]
+}
+
+/// No file handle or write operation escapes this closed reader.
+pub(crate) fn read_fixture_marker(path: &Path) -> FixtureResult<Vec<u8>> {
+    let bytes = observe_marker(path)?;
+    if bytes.len() > 65536 {
+        return Err(invalid("F05 read observation exceeds fixture bound"));
+    }
+    Ok(bytes)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
