@@ -4,9 +4,11 @@
 pub mod admission;
 pub mod authority;
 pub mod codec;
+pub mod evidence;
 pub mod fixture_projection;
 pub mod outcome;
 pub mod records;
+pub mod recovery;
 pub mod selector;
 pub mod target;
 pub mod validation;
