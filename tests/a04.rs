@@ -12,14 +12,15 @@ use titan_kernel::{
     encode_fixture,
     evidence::{
         ActionSpecV1, BlockerResolutionMechanismV1, EffectStateV1, F04_ROOT, FixtureBlockerProbeV1,
-        FixtureEffectProbeV1, FixtureEventV1, FixtureStoreV1, ReconciliationConclusionV1,
-        append_fixture_event, hash, observation_event, replay_fixture_history,
+        FixtureEffectProbeV1, FixtureEventV1, FixtureOutcomeContextV1, FixtureStoreV1,
+        ReconciliationConclusionV1, append_fixture_event, hash, observation_event,
+        replay_fixture_history,
     },
     fixture_projection::{
         FixtureAuthoritySeedV1, FixtureEventKind, FixtureEventV1 as AuthorityEvent,
         FixtureProjection, IssuerScopeV1, apply_fixture_event,
     },
-    outcome::{BlockedCode, OutcomeVariant, PassCode, UnknownCode},
+    outcome::{BlockedCode, FailCode, OutcomeVariant, PassCode, UnknownCode},
     records::{
         ActorBinding, AuthorityClass, AuthorityRecord, BindingState, ClaimAtom, EvidenceRef,
         EvidenceStatus, ExecutionContract, Namespace, Outcome, ProjectBinding, Provision,
@@ -1124,6 +1125,7 @@ fn a04_guard_pass_requires_current_evidence_and_no_unknown_effect() {
     h.reject(
         FixtureEventV1::Outcome {
             record: pass.canonical_bytes().to_vec(),
+            context: outcome_context(&h),
         },
         BlockedCode::InsufficientEvidence,
     );
@@ -1144,6 +1146,7 @@ fn a04_guard_pass_requires_current_evidence_and_no_unknown_effect() {
     h.reject(
         FixtureEventV1::Outcome {
             record: pass.canonical_bytes().to_vec(),
+            context: outcome_context(&h),
         },
         BlockedCode::InsufficientEvidence,
     );
@@ -1364,4 +1367,498 @@ fn a04_28_fully_resumable_is_inert() {
     assert_eq!(first.namespace, "FIXTURE");
     assert!(first.decision_id.starts_with("fx:resume-decision:"));
     assert_eq!(bytes, fs::read(h.store.raw_path("ready").unwrap()).unwrap());
+}
+
+fn outcome_context(h: &Harness) -> FixtureOutcomeContextV1 {
+    FixtureOutcomeContextV1 {
+        action: h.spec(),
+        contract_id: h.expected_id.clone(),
+        subject_revision: h.spec().before_state,
+        gate_ref: "fx:gate:ready".into(),
+    }
+}
+
+fn terminal_event(h: &Harness, status: OutcomeVariant, refs: Vec<String>) -> FixtureEventV1 {
+    let o = record(RecordPayload::Outcome(Outcome {
+        outcome_id: "fx:outcome:r1".into(),
+        status_and_code: status,
+        scope_ref: h.run.clone(),
+        evidence_refs: refs,
+        next_action: "NONE".into(),
+        detail: "fixture-only R1 regression".into(),
+    }));
+    FixtureEventV1::Outcome {
+        record: o.canonical_bytes().to_vec(),
+        context: outcome_context(h),
+    }
+}
+
+#[test]
+fn a04_r1_m01_partial_fail_rejected() {
+    let h = Harness::new("r1-m01-fail");
+    h.ready();
+    h.append(h.effect(
+        EffectStateV1::PartiallyOccurred,
+        "fx:action:r1",
+        "fx:idempotency:r1",
+    ));
+    h.reject(
+        terminal_event(
+            &h,
+            OutcomeVariant::Fail(FailCode::WorkFailed),
+            vec!["fx:evidence:ready".into()],
+        ),
+        BlockedCode::InsufficientEvidence,
+    );
+    assert_eq!(
+        replay_fixture_history(&h.store).unwrap().effects["fx:action:r1"].2,
+        EffectStateV1::PartiallyOccurred
+    );
+}
+
+#[test]
+fn a04_r1_m01_partial_pass_rejected() {
+    let h = Harness::new("r1-m01-pass");
+    h.ready();
+    h.append(h.effect(
+        EffectStateV1::PartiallyOccurred,
+        "fx:action:r1",
+        "fx:idempotency:r1",
+    ));
+    h.reject(
+        terminal_event(
+            &h,
+            OutcomeVariant::Pass(PassCode::GatePassed),
+            vec!["fx:evidence:ready".into()],
+        ),
+        BlockedCode::InsufficientEvidence,
+    );
+}
+
+#[test]
+fn a04_r1_m02_new_identity_cannot_escape_fingerprint() {
+    let mut h = Harness::new("r1-m02-identity");
+    h.ready();
+    h.append(h.effect(
+        EffectStateV1::PossiblyOccurredInterrupted,
+        "fx:action:old",
+        "fx:idempotency:old",
+    ));
+    h.run = "fx:run:new-identity".into();
+    h.reject(
+        h.effect(
+            EffectStateV1::NotAttempted,
+            "fx:action:new",
+            "fx:idempotency:new",
+        ),
+        BlockedCode::PreconditionDrift,
+    );
+    h.observe("new-ready", "FIXTURE_PROBE", b"new ready");
+    h.reject(
+        terminal_event(
+            &h,
+            OutcomeVariant::Pass(PassCode::GatePassed),
+            vec!["fx:evidence:new-ready".into()],
+        ),
+        BlockedCode::InsufficientEvidence,
+    );
+}
+
+#[test]
+fn a04_r1_m02_other_run_evidence_rejected() {
+    let mut h = Harness::new("r1-m02-other-run");
+    h.ready();
+    h.run = "fx:run:another".into();
+    h.reject(
+        terminal_event(
+            &h,
+            OutcomeVariant::Pass(PassCode::GatePassed),
+            vec!["fx:evidence:ready".into()],
+        ),
+        BlockedCode::ContractInvalid,
+    );
+}
+
+fn direct_nonoccurrence(h: &Harness) -> String {
+    let spec = h.spec();
+    let proof = append_probe(
+        h,
+        "direct-proof",
+        "fx:action:a04",
+        &spec,
+        ReconciliationConclusionV1::DidNotOccur,
+        &spec.before_state,
+    );
+    h.append(FixtureEventV1::Effect {
+        action_id: "fx:action:a04".into(),
+        fingerprint: spec.fingerprint().unwrap(),
+        spec,
+        idempotency_id: "fx:idempotency:a04".into(),
+        state: EffectStateV1::FailedBeforeOccurrence,
+        evidence_ids: vec![proof.clone()],
+    });
+    proof
+}
+
+fn invalidate_proof(h: &Harness, proof: &str) {
+    let prior_digest = replay_fixture_history(&h.store)
+        .unwrap()
+        .observation_digests[proof]
+        .clone();
+    h.observe("direct-review", "EVIDENCE_REVIEW", b"direct proof invalid");
+    h.append(FixtureEventV1::EvidenceInvalidated {
+        evidence_id: proof.into(),
+        prior_digest,
+        source_evidence_id: "fx:evidence:direct-review".into(),
+        reason_code: "INVALIDATED_BY_REVIEW".into(),
+        actor_id: ACTOR.into(),
+        epoch: 7,
+    });
+}
+
+#[test]
+fn a04_r1_m03_direct_nonoccurrence_valid() {
+    let h = Harness::new("r1-m03-valid");
+    h.ready();
+    direct_nonoccurrence(&h);
+    assert_eq!(
+        replay_fixture_history(&h.store).unwrap().effects["fx:action:a04"].2,
+        EffectStateV1::FailedBeforeOccurrence
+    );
+    let (admission, checkpoint) = h.checkpoint();
+    let current = h.input();
+    let fingerprint = h.spec().fingerprint().unwrap();
+    assert_eq!(
+        evaluate_fixture_resume(
+            &h.store,
+            &checkpoint,
+            &h.checkpoint_input(&admission, &current, &fingerprint)
+        )
+        .unwrap()
+        .semantic,
+        ResumeSemanticV1::Resumable
+    );
+}
+
+#[test]
+fn a04_r1_m03_direct_invalidation_reopens_on_restart() {
+    let h = Harness::new("r1-m03-restart");
+    let proof = direct_nonoccurrence(&h);
+    let before = replay_fixture_history(&h.store).unwrap().entries;
+    invalidate_proof(&h, &proof);
+    let reopened = FixtureStoreV1::open(h.store.case_id(), &h.seed).unwrap();
+    let history = replay_fixture_history(&reopened).unwrap();
+    assert_eq!(&history.entries[..before.len()], before.as_slice());
+    assert_eq!(
+        history.effects["fx:action:a04"].2,
+        EffectStateV1::OutcomeUnestablished
+    );
+}
+
+#[test]
+fn a04_r1_m03_invalid_direct_proof_blocks_resume() {
+    let h = Harness::new("r1-m03-resume");
+    h.ready();
+    let proof = direct_nonoccurrence(&h);
+    invalidate_proof(&h, &proof);
+    let (admission, checkpoint) = h.checkpoint();
+    let current = h.input();
+    let fingerprint = h.spec().fingerprint().unwrap();
+    let result = evaluate_fixture_resume(
+        &h.store,
+        &checkpoint,
+        &h.checkpoint_input(&admission, &current, &fingerprint),
+    )
+    .unwrap();
+    assert_eq!(result.semantic, ResumeSemanticV1::ReconciliationRequired);
+    assert_eq!(
+        result.outcome,
+        OutcomeVariant::Unknown(UnknownCode::PartialEffectUnreconciled)
+    );
+}
+
+#[test]
+fn a04_r1_m02_wrong_context_attribution_rejected() {
+    let h = Harness::new("r1-m02-attribution");
+    h.ready();
+    for field in [
+        "contract-id",
+        "contract-digest",
+        "subject",
+        "revision",
+        "gate",
+        "project",
+    ] {
+        let mut event = terminal_event(
+            &h,
+            OutcomeVariant::Pass(PassCode::GatePassed),
+            vec!["fx:evidence:ready".into()],
+        );
+        let FixtureEventV1::Outcome { context, .. } = &mut event else {
+            unreachable!()
+        };
+        match field {
+            "contract-id" => context.contract_id = "fx:contract:other".into(),
+            "contract-digest" => context.action.contract_digest = ZERO.into(),
+            "subject" => context.action.target_id = "fx:target:other".into(),
+            "revision" => context.subject_revision = "wrong-revision".into(),
+            "gate" => context.gate_ref = "fx:gate:other".into(),
+            "project" => context.action.project_id = "fx:project:other".into(),
+            _ => unreachable!(),
+        }
+        h.reject(event, BlockedCode::ContractInvalid);
+    }
+    // Mutating evidence rather than the declared outcome context must also fail.
+    for field in ["contract", "subject", "revision", "gate"] {
+        let base = h.raw_observation(field, "FIXTURE_PROBE", b"misattributed");
+        let mut e = evidence_of(&base);
+        match field {
+            "contract" => e.contract_ref = "fx:contract:other".into(),
+            "subject" => e.subject_ref = "fx:target:other".into(),
+            "revision" => e.subject_revision = "wrong-revision".into(),
+            "gate" => e.gate_ref = Some("fx:gate:other".into()),
+            _ => unreachable!(),
+        }
+        let e = record(RecordPayload::EvidenceRef(e));
+        h.append(observation_event(&h.seed, &e, &h.actor, &h.expected_digest).unwrap());
+        h.reject(
+            terminal_event(
+                &h,
+                OutcomeVariant::Fail(FailCode::WorkFailed),
+                vec![format!("fx:evidence:{field}")],
+            ),
+            BlockedCode::ContractInvalid,
+        );
+    }
+}
+
+#[test]
+fn a04_r1_m01_all_unresolved_states_block_both_terminals() {
+    for (name, state) in [
+        ("possible", EffectStateV1::PossiblyOccurredInterrupted),
+        ("partial", EffectStateV1::PartiallyOccurred),
+        ("unknown", EffectStateV1::OutcomeUnestablished),
+    ] {
+        let h = Harness::new(&format!("r1-m01-{name}"));
+        h.ready();
+        h.append(h.effect(state, "fx:action:a04", "fx:idempotency:a04"));
+        for status in [
+            OutcomeVariant::Pass(PassCode::GatePassed),
+            OutcomeVariant::Fail(FailCode::WorkFailed),
+        ] {
+            h.reject(
+                terminal_event(&h, status, vec!["fx:evidence:ready".into()]),
+                BlockedCode::InsufficientEvidence,
+            );
+        }
+        h.append(terminal_event(
+            &h,
+            OutcomeVariant::Unknown(UnknownCode::PartialEffectUnreconciled),
+            vec![],
+        ));
+        assert_eq!(
+            replay_fixture_history(&h.store).unwrap().effects["fx:action:a04"].2,
+            state
+        );
+    }
+}
+
+#[test]
+fn a04_r1_m02_valid_exact_context_admits_pass_and_fail() {
+    let h = Harness::new("r1-m02-valid");
+    h.ready();
+    for status in [
+        OutcomeVariant::Pass(PassCode::GatePassed),
+        OutcomeVariant::Fail(FailCode::WorkFailed),
+    ] {
+        h.append(terminal_event(&h, status, vec!["fx:evidence:ready".into()]));
+    }
+    assert_eq!(replay_fixture_history(&h.store).unwrap().outcomes.len(), 2);
+}
+
+#[test]
+fn a04_r1_m02_noncurrent_evidence_cannot_support_terminal() {
+    let h = Harness::new("r1-m02-noncurrent");
+    h.ready();
+    invalidate_proof(&h, "fx:evidence:ready");
+    for status in [
+        OutcomeVariant::Pass(PassCode::GatePassed),
+        OutcomeVariant::Fail(FailCode::WorkFailed),
+    ] {
+        h.reject(
+            terminal_event(&h, status, vec!["fx:evidence:ready".into()]),
+            BlockedCode::InsufficientEvidence,
+        );
+    }
+}
+
+#[test]
+fn a04_r1_m03_direct_support_binds_both_digests() {
+    let h = Harness::new("r1-m03-digests");
+    let proof = direct_nonoccurrence(&h);
+    let history = replay_fixture_history(&h.store).unwrap();
+    let support = &history.effect_support["fx:action:a04"][0];
+    assert_eq!(support.evidence_id, proof);
+    assert_eq!(support.record_digest, history.observation_digests[&proof]);
+    assert_eq!(
+        support.content_digest,
+        history.observations[&proof].0.content_digest
+    );
+}
+
+#[test]
+fn a04_r1_m03_superseded_direct_proof_reopens() {
+    let h = Harness::new("r1-m03-supersede");
+    let proof = direct_nonoccurrence(&h);
+    let prior_digest = replay_fixture_history(&h.store)
+        .unwrap()
+        .observation_digests[&proof]
+        .clone();
+    h.observe(
+        "replacement",
+        "FIXTURE_PROBE",
+        b"replacement alone does not reconcile",
+    );
+    h.append(FixtureEventV1::EvidenceSuperseded {
+        old_id: proof,
+        new_id: "fx:evidence:replacement".into(),
+        prior_digest,
+        source_evidence_id: "fx:evidence:replacement".into(),
+        reason_code: "SUPERSEDED_BY_NEW_OBSERVATION".into(),
+        actor_id: ACTOR.into(),
+        epoch: 8,
+    });
+    assert_eq!(
+        replay_fixture_history(&h.store).unwrap().effects["fx:action:a04"].2,
+        EffectStateV1::OutcomeUnestablished
+    );
+}
+
+#[test]
+fn a04_r1_m03_fresh_reconciliation_required_after_direct_invalidation() {
+    let h = Harness::new("r1-m03-fresh");
+    h.ready();
+    let old = direct_nonoccurrence(&h);
+    invalidate_proof(&h, &old);
+    let spec = h.spec();
+    let fresh = append_probe(
+        &h,
+        "fresh-proof",
+        "fx:action:a04",
+        &spec,
+        ReconciliationConclusionV1::DidNotOccur,
+        &spec.before_state,
+    );
+    // A fresh observation alone must not silently restore the conclusion.
+    assert_eq!(
+        replay_fixture_history(&h.store).unwrap().effects["fx:action:a04"].2,
+        EffectStateV1::OutcomeUnestablished
+    );
+    h.append(FixtureEventV1::Reconciliation {
+        action_id: "fx:action:a04".into(),
+        conclusion: ReconciliationConclusionV1::DidNotOccur,
+        evidence_ids: vec![fresh.clone()],
+    });
+    let history = replay_fixture_history(&h.store).unwrap();
+    assert_eq!(
+        history.effects["fx:action:a04"].2,
+        EffectStateV1::FailedBeforeOccurrence
+    );
+    assert_eq!(
+        history.effect_support["fx:action:a04"][0].evidence_id,
+        fresh
+    );
+    h.append(terminal_event(
+        &h,
+        OutcomeVariant::Fail(FailCode::WorkFailed),
+        vec!["fx:evidence:ready".into()],
+    ));
+    let (admission, checkpoint) = h.checkpoint();
+    let current = h.input();
+    let fingerprint = spec.fingerprint().unwrap();
+    assert_eq!(
+        evaluate_fixture_resume(
+            &h.store,
+            &checkpoint,
+            &h.checkpoint_input(&admission, &current, &fingerprint)
+        )
+        .unwrap()
+        .semantic,
+        ResumeSemanticV1::Resumable
+    );
+}
+
+#[test]
+fn a04_r1_m03_corrupt_direct_proof_fails_closed_without_repair() {
+    let h = Harness::new("r1-m03-corrupt");
+    h.ready();
+    direct_nonoccurrence(&h);
+    let (admission, checkpoint) = h.checkpoint();
+    let before = replay_fixture_history(&h.store).unwrap().entries;
+    let path = h.store.raw_path("direct-proof").unwrap();
+    fs::write(&path, b"corrupt proof").unwrap();
+    assert!(replay_fixture_history(&h.store).is_err());
+    let current = h.input();
+    let fingerprint = h.spec().fingerprint().unwrap();
+    assert!(
+        evaluate_fixture_resume(
+            &h.store,
+            &checkpoint,
+            &h.checkpoint_input(&admission, &current, &fingerprint)
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"corrupt proof");
+    for entry in before {
+        let bytes = fs::read(
+            h.store
+                .case_path()
+                .join("events")
+                .join(format!("{:010}.json", entry.sequence)),
+        )
+        .unwrap();
+        assert_eq!(bytes, serde_json::to_vec(&entry).unwrap());
+    }
+}
+
+#[test]
+fn a04_r1_m03_completed_direct_proof_invalidation_reopens() {
+    let h = Harness::new("r1-m03-completed");
+    let mut spec = h.spec();
+    spec.before_state = "before".into();
+    let proof = append_probe(
+        &h,
+        "completed-proof",
+        "fx:action:a04",
+        &spec,
+        ReconciliationConclusionV1::Occurred,
+        "after",
+    );
+    h.append(FixtureEventV1::Effect {
+        action_id: "fx:action:a04".into(),
+        fingerprint: spec.fingerprint().unwrap(),
+        spec,
+        idempotency_id: "fx:idempotency:a04".into(),
+        state: EffectStateV1::CompletedObserved,
+        evidence_ids: vec![proof.clone()],
+    });
+    invalidate_proof(&h, &proof);
+    assert_eq!(
+        replay_fixture_history(&h.store).unwrap().effects["fx:action:a04"].2,
+        EffectStateV1::OutcomeUnestablished
+    );
+}
+
+#[test]
+fn a04_r1_m02_terminal_without_context_rejected() {
+    let h = Harness::new("r1-m02-no-context");
+    h.ready();
+    let event = terminal_event(
+        &h,
+        OutcomeVariant::Pass(PassCode::GatePassed),
+        vec!["fx:evidence:ready".into()],
+    );
+    let mut json = serde_json::to_value(event).unwrap();
+    json["data"].as_object_mut().unwrap().remove("context");
+    assert!(serde_json::from_value::<FixtureEventV1>(json).is_err());
 }

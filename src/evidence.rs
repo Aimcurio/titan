@@ -330,6 +330,24 @@ pub struct FixtureEffectProbeV1 {
     pub conclusion: ReconciliationConclusionV1,
 }
 
+/// Explicit F04 attribution; the F01 outcome itself has only a run scope.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureOutcomeContextV1 {
+    pub action: ActionSpecV1,
+    pub contract_id: String,
+    pub subject_revision: String,
+    pub gate_ref: String,
+}
+
+/// Both the typed observation bytes and raw artifact bytes support the conclusion.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixtureEffectSupportV1 {
+    pub evidence_id: String,
+    pub record_digest: String,
+    pub content_digest: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FixtureEventV1 {
@@ -358,6 +376,7 @@ pub enum FixtureEventV1 {
     },
     Outcome {
         record: Vec<u8>,
+        context: FixtureOutcomeContextV1,
     },
     Checkpoint {
         checkpoint_id: String,
@@ -434,6 +453,7 @@ pub struct FixtureHistoryV1 {
     pub effect_specs: BTreeMap<String, ActionSpecV1>,
     pub effect_runs: BTreeMap<String, String>,
     pub reconciliation_support: BTreeMap<String, Vec<String>>,
+    pub effect_support: BTreeMap<String, Vec<FixtureEffectSupportV1>>,
     pub blocker_support: BTreeMap<String, Vec<String>>,
     pub checkpoints: BTreeMap<String, Vec<u8>>,
     pub outcomes: Vec<Outcome>,
@@ -462,6 +482,54 @@ impl FixtureHistoryV1 {
     pub fn current_evidence(&self, id: &str) -> bool {
         self.observations.contains_key(id)
             && self.evidence_status.get(id) == Some(&EvidenceStatus::Current)
+    }
+    fn retain_effect_support(&mut self, action: &str, ids: &[String]) -> FixtureResult<()> {
+        let support = ids
+            .iter()
+            .map(|id| {
+                let (e, _) = self
+                    .observations
+                    .get(id)
+                    .ok_or_else(|| invalid("effect support missing"))?;
+                let record_digest = self
+                    .observation_digests
+                    .get(id)
+                    .ok_or_else(|| invalid("effect support digest missing"))?;
+                Ok(FixtureEffectSupportV1 {
+                    evidence_id: id.clone(),
+                    record_digest: record_digest.clone(),
+                    content_digest: e.content_digest.clone(),
+                })
+            })
+            .collect::<FixtureResult<Vec<_>>>()?;
+        self.effect_support.insert(action.into(), support);
+        Ok(())
+    }
+    fn reopen_unsupported_effects(&mut self, store: &FixtureStoreV1) {
+        let unsupported = self
+            .effect_support
+            .iter()
+            .filter(|(_, refs)| {
+                refs.iter().any(|support| {
+                    !self.current_evidence(&support.evidence_id)
+                        || self.observation_digests.get(&support.evidence_id)
+                            != Some(&support.record_digest)
+                        || self
+                            .observations
+                            .get(&support.evidence_id)
+                            .is_none_or(|(e, _)| {
+                                e.content_digest != support.content_digest
+                                    || store.read_raw(&e.locator, &support.content_digest).is_err()
+                            })
+                })
+            })
+            .map(|(action, _)| action.clone())
+            .collect::<Vec<_>>();
+        for action in unsupported {
+            if let Some((_, _, state)) = self.effects.get_mut(&action) {
+                *state = EffectStateV1::OutcomeUnestablished;
+            }
+        }
     }
 }
 
@@ -648,13 +716,7 @@ fn apply(
             }
             h.evidence_status
                 .insert(evidence_id.clone(), EvidenceStatus::Invalidated);
-            for (action, refs) in &h.reconciliation_support {
-                if refs.contains(evidence_id)
-                    && let Some((_, _, state)) = h.effects.get_mut(action)
-                {
-                    *state = EffectStateV1::OutcomeUnestablished;
-                }
-            }
+            h.reopen_unsupported_effects(store);
             for (blocker, refs) in &h.blocker_support {
                 if refs.contains(evidence_id)
                     && let Some((_, active)) = h.blockers.get_mut(blocker)
@@ -695,13 +757,7 @@ fn apply(
             }
             h.evidence_status
                 .insert(old_id.clone(), EvidenceStatus::Superseded);
-            for (action, refs) in &h.reconciliation_support {
-                if refs.contains(old_id)
-                    && let Some((_, _, state)) = h.effects.get_mut(action)
-                {
-                    *state = EffectStateV1::OutcomeUnestablished;
-                }
-            }
+            h.reopen_unsupported_effects(store);
             for (blocker, refs) in &h.blocker_support {
                 if refs.contains(old_id)
                     && let Some((_, active)) = h.blockers.get_mut(blocker)
@@ -710,23 +766,56 @@ fn apply(
                 }
             }
         }
-        FixtureEventV1::Outcome { record } => {
+        FixtureEventV1::Outcome { record, context } => {
             let o = outcome(record)?;
+            let fingerprint = context.action.fingerprint()?;
+            let project = validate_bytes(&store.seed.project_record)
+                .map_err(|_| invalid("outcome project invalid"))?;
+            let RecordPayload::ProjectBinding(project) = &project.record().payload else {
+                return Err(invalid("outcome project binding required"));
+            };
             if o.scope_ref != entry.run_id
-                || o.evidence_refs
-                    .iter()
-                    .any(|id| !h.observations.contains_key(id))
+                || context.action.project_id != project.project_id
+                || !fixture_id(&context.contract_id, "contract")
+                || !fixture_id(&context.gate_ref, "gate")
+                || context.subject_revision.is_empty()
+                || o.evidence_refs.iter().any(|id| {
+                    h.observations.get(id).is_none_or(|(e, digest)| {
+                        e.run_ref != entry.run_id
+                            || e.contract_ref != context.contract_id
+                            || digest != &context.action.contract_digest
+                            || e.subject_ref != context.action.target_id
+                            || e.subject_revision != context.subject_revision
+                            || e.gate_ref.as_ref() != Some(&context.gate_ref)
+                    })
+                })
             {
-                return Err(invalid("outcome run or evidence binding"));
+                return Err(invalid("outcome context or evidence attribution mismatch"));
             }
-            if matches!(o.status_and_code, OutcomeVariant::Pass(_))
-                && (o.evidence_refs.is_empty()
-                    || o.evidence_refs.iter().any(|id| !h.current_evidence(id))
-                    || h.effects.iter().any(|(id, (_, _, s))| {
-                        h.effect_runs.get(id) == Some(&entry.run_id) && s.unresolved()
-                    }))
+            if o.evidence_refs.iter().any(|id| !h.current_evidence(id)) {
+                return Err(fail(
+                    BlockedCode::InsufficientEvidence,
+                    "outcome evidence not current",
+                ));
+            }
+            for id in &o.evidence_refs {
+                let (e, _) = &h.observations[id];
+                store.read_raw(&e.locator, &e.content_digest)?;
+            }
+            h.reopen_unsupported_effects(store);
+            let unresolved = h.unresolved_fingerprints();
+            if matches!(
+                o.status_and_code,
+                OutcomeVariant::Pass(_) | OutcomeVariant::Fail(_)
+            ) && (o.evidence_refs.is_empty()
+                    || unresolved.contains(fingerprint.as_str())
+                    // A run-scoped terminal outcome cannot hide other uncertainty in this case.
+                    || !unresolved.is_empty())
             {
-                return Err(fail(BlockedCode::InsufficientEvidence, "unsupported PASS"));
+                return Err(fail(
+                    BlockedCode::InsufficientEvidence,
+                    "unsupported terminal outcome; reconciliation required",
+                ));
             }
             h.outcomes.push(o);
         }
@@ -914,6 +1003,12 @@ fn apply(
             h.effect_specs.insert(action_id.clone(), spec.clone());
             h.effect_runs
                 .insert(action_id.clone(), entry.run_id.clone());
+            if matches!(
+                state,
+                EffectStateV1::CompletedObserved | EffectStateV1::FailedBeforeOccurrence
+            ) {
+                h.retain_effect_support(action_id, evidence_ids)?;
+            }
         }
         FixtureEventV1::Reconciliation {
             action_id,
@@ -976,6 +1071,7 @@ fn apply(
             }
             h.reconciliation_support
                 .insert(action_id.clone(), evidence_ids.clone());
+            h.retain_effect_support(action_id, evidence_ids)?;
         }
     }
     Ok(())
@@ -1019,6 +1115,7 @@ pub fn replay_fixture_history(store: &FixtureStoreV1) -> FixtureResult<FixtureHi
         apply(&mut h, store, &entry)?;
         h.entries.push(entry);
     }
+    h.reopen_unsupported_effects(store);
     Ok(h)
 }
 
