@@ -3,6 +3,8 @@
 
 pub mod admission;
 pub mod authority;
+pub mod broker;
+pub mod capability;
 pub mod codec;
 pub mod evidence;
 pub mod fixture_projection;
