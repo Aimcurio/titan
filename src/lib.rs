@@ -6,6 +6,7 @@ pub mod authority;
 pub mod broker;
 pub mod capability;
 pub mod codec;
+pub mod eligibility;
 pub mod evidence;
 pub mod fixture_projection;
 pub mod outcome;
@@ -14,6 +15,7 @@ pub mod recovery;
 pub mod selector;
 pub mod target;
 pub mod validation;
+pub mod verification;
 
 pub use codec::{ValidatedRecord, encode_fixture, validate_bytes};
 pub use validation::{ValidationError, ValidationStage};
