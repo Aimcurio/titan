@@ -14,6 +14,8 @@ pub mod records;
 pub mod recovery;
 pub mod selector;
 pub mod target;
+pub mod test_store;
+pub mod transition;
 pub mod validation;
 pub mod verification;
 
