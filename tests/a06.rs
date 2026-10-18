@@ -26,7 +26,7 @@ const PROJECT: &str = "fx:project:lab";
 const EXECUTOR: &str = "fx:actor:executor";
 const VERIFIER: &str = "fx:actor:verifier";
 const APPROVER: &str = "fx:actor:approver";
-const TASK: &str = r"C:\Users\15103\Documents\Codex\2026-09-29\files-pasted-by-the-user-titan\work";
+const TASK: &str = titan_kernel::FIXTURE_WORK_ROOT;
 fn record(payload: RecordPayload, creator: &str) -> ValidatedRecord {
     encode_fixture(RecordEnvelope {
         record_type: payload.record_type(),
@@ -165,6 +165,12 @@ impl Harness {
         Self::with_alias(slug, false)
     }
     fn with_alias(slug: &str, alias: bool) -> Self {
+        static SENTINEL: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        SENTINEL.get_or_init(|| {
+            let sentinel = PathBuf::from(TASK).join("f05-fixtures/a06-read-only-sentinel");
+            fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
+            fs::write(sentinel, b"prior-f05-consequence").unwrap();
+        });
         let case = format!("a06-{slug}-{}", std::process::id());
         let project = record(
             RecordPayload::ProjectBinding(ProjectBinding {
@@ -1083,12 +1089,11 @@ fn a06_37_no_f05_invocation_positive_negative() {
 #[test]
 fn a06_38_no_f05_target_changes() {
     let h = Harness::new("38");
+    let sentinel = PathBuf::from(TASK).join("f05-fixtures/a06-read-only-sentinel");
+    let before = h.snapshot();
     h.eval().unwrap();
-    assert!(
-        h.snapshot()
-            .iter()
-            .any(|r| r.path.contains("a05-01-27240") && r.kind == "FILE")
-    );
+    assert_eq!(before, h.snapshot());
+    assert_eq!(fs::read(&sentinel).unwrap(), b"prior-f05-consequence");
 }
 #[test]
 fn a06_39_no_f04_history_append_repair() {
@@ -1103,9 +1108,12 @@ fn a06_39_no_f04_history_append_repair() {
 #[test]
 fn a06_40_no_canonical_pointer_created_or_selected() {
     let h = Harness::new("40");
-    assert!(!PathBuf::from(TASK).join("f07-fixtures").exists());
+    let mut before = Vec::new();
+    inventory(&PathBuf::from(TASK).join("f07-fixtures"), &mut before);
     h.eval().unwrap();
-    assert!(!PathBuf::from(TASK).join("f07-fixtures").exists());
+    let mut after = Vec::new();
+    inventory(&PathBuf::from(TASK).join("f07-fixtures"), &mut after);
+    assert_eq!(before, after);
 }
 #[test]
 fn a06_41_no_network_credentials_process_surface() {

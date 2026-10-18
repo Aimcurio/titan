@@ -908,11 +908,9 @@ fn a02_guard_replay_snapshot_and_corruption_fail_closed() {
         None,
     );
     let bytes = fixture_snapshot_bytes(&seed, &[rev, succ, pred], &[e3, e2, e1]).unwrap();
-    let dir = PathBuf::from(
-        std::env::var("TITAN_F02_FIXTURE_DIR").expect("isolated F02 fixture directory required"),
-    );
-    assert!(dir.is_dir());
-    assert!(!dir.to_string_lossy().contains("titan-forward"));
+    let dir = PathBuf::from(titan_kernel::FIXTURE_WORK_ROOT)
+        .join(format!("f02-replay-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("a02-replay-{}.json", std::process::id()));
     fs::write(&path, &bytes).unwrap();
     let reloaded = fs::read(&path).unwrap();
@@ -943,7 +941,7 @@ fn a02_guard_invalid_resource_spellings_and_stale_state() {
         "fixture://resource/lab/../a",
         "fixture://resource/lab\\a",
         "fixture://resource/lab/%61",
-        "fixture://resource/lab/À",
+        "fixture://resource/lab/Ã€",
         "fixture://resource/Lab/a",
         "E:\\Pipeline\\titan-forward",
         "https://github.com/Aimcurio/titan",

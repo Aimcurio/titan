@@ -12,7 +12,7 @@ use std::{fs, io::Read, path::Path};
 pub const POLICY: &str = "F06_FIXTURE_ASSURANCE_POLICY_V1";
 pub const RULE: &str = "F06_ELIGIBILITY_RULE_V1";
 pub const ROOT: &str =
-    r"C:\Users\15103\Documents\Codex\2026-09-29\files-pasted-by-the-user-titan\work\f06-fixtures";
+    concat!(env!("OUT_DIR"), "/f06-fixtures");
 pub const VERIFICATION_DOMAIN: &[u8] = b"TITAN-FWD-F06\0verification-v1\0";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

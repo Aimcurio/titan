@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub const APPROVED_FIXTURE_ROOT: &str =
-    r"C:\Users\15103\Documents\Codex\2026-09-29\files-pasted-by-the-user-titan\work\f03-fixtures";
+    concat!(env!("OUT_DIR"), "/f03-fixtures");
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FixtureTargetPolicyV1 {

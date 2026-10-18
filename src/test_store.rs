@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 pub const F07_ROOT: &str =
-    r"C:\Users\15103\Documents\Codex\2026-09-29\files-pasted-by-the-user-titan\work\f07-fixtures";
+    concat!(env!("OUT_DIR"), "/f07-fixtures");
 
 pub(crate) fn basis_digest(eligibility: &[u8], snapshot: &[u8]) -> String {
     // Length framing prevents concatenation ambiguity.

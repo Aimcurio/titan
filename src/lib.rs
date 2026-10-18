@@ -21,3 +21,6 @@ pub mod verification;
 
 pub use codec::{ValidatedRecord, encode_fixture, validate_bytes};
 pub use validation::{ValidationError, ValidationStage};
+
+/// Build-local disposable fixture domain; confers no operational authority.
+pub const FIXTURE_WORK_ROOT: &str = env!("OUT_DIR");

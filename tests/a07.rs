@@ -32,7 +32,7 @@ const EXECUTOR: &str = "fx:actor:executor";
 const VERIFIER: &str = "fx:actor:verifier";
 const APPROVER: &str = "fx:actor:approver";
 const AUTHORIZER: &str = "fx:actor:authorizer";
-const TASK: &str = r"C:\Users\15103\Documents\Codex\2026-09-29\files-pasted-by-the-user-titan\work";
+const TASK: &str = titan_kernel::FIXTURE_WORK_ROOT;
 fn record(payload: RecordPayload, creator: &str) -> ValidatedRecord {
     encode_fixture(RecordEnvelope {
         record_type: payload.record_type(),

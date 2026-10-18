@@ -36,7 +36,7 @@ use titan_kernel::{
 
 const PROJECT: &str = "fx:project:lab";
 const ACTOR: &str = "fx:actor:synthetic";
-const TARGET: &str = "fx:target:a03-01";
+const TARGET: &str = "fx:target:a04-dependency";
 const RESOURCE: &str = "fixture://resource/lab";
 const ZERO: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -208,20 +208,23 @@ impl Harness {
             &seed.profile,
         );
         let resolution = resolve_fixture_request(&state, &state.state_id, &request).unwrap();
-        // A04 only observes the already-existing F03 target; it does not create or rewrite it.
-        let marker = PathBuf::from(APPROVED_FIXTURE_ROOT).join("targets/a03-01.json");
-        assert!(
-            marker.is_file(),
-            "accepted F03 fixture prerequisite absent: {}",
-            marker.display()
-        );
+        // Arrange a private F03 dependency before the read-only operation under test.
+        let relative = PathBuf::from("targets/a04-dependency.json");
+        let marker = PathBuf::from(APPROVED_FIXTURE_ROOT).join(&relative);
+        static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        INIT.get_or_init(|| {
+        fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        fs::write(&marker, serde_json::to_vec(&titan_kernel::target::FixtureTargetMarkerV1 {
+            namespace: "FIXTURE".into(), target_id: TARGET.into(), revision: "r1".into(), state_code: "COMMITTED".into(),
+        }).unwrap()).unwrap();
+        });
         let policy = FixtureTargetPolicyV1 {
             project_id: PROJECT.into(),
             project_digest: project.record().integrity.clone(),
             project_uri: "fixture://project/lab".into(),
             approved_root: PathBuf::from(APPROVED_FIXTURE_ROOT),
             target_id: TARGET.into(),
-            relative_marker_path: PathBuf::from("targets/a03-01.json"),
+            relative_marker_path: relative,
         };
         let target = construct_fixture_target_snapshot(&policy).unwrap();
         let contract = record(RecordPayload::ExecutionContract(ExecutionContract {

@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub const F04_ROOT: &str =
-    r"C:\Users\15103\Documents\Codex\2026-09-29\files-pasted-by-the-user-titan\work\f04-fixtures";
+    concat!(env!("OUT_DIR"), "/f04-fixtures");
 pub const HISTORY_MARKER: &str = "TITAN_F04_FIXTURE_HISTORY_V1";
 
 pub fn hash(domain: &[u8], bytes: &[u8]) -> String {

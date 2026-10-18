@@ -21,7 +21,7 @@ pub const READ_CAPABILITY: &str = "FIXTURE_READ_ONLY";
 pub const READ_OPERATION: &str = "READ";
 pub const READ_HANDLER: &str = "READ_FIXTURE_MARKER_V1";
 pub const F05_ROOT: &str =
-    r"C:\Users\15103\Documents\Codex\2026-09-29\files-pasted-by-the-user-titan\work\f05-fixtures";
+    concat!(env!("OUT_DIR"), "/f05-fixtures");
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

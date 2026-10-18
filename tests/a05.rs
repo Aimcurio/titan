@@ -1410,8 +1410,8 @@ fn a05_a1_11_real_reparse_directory_rejected() {
     {
         let status = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
-            .arg(&markers)
-            .arg(&saved)
+            .arg(markers.to_string_lossy().replace('/', "\\"))
+            .arg(saved.to_string_lossy().replace('/', "\\"))
             .output()
             .unwrap();
         assert!(
