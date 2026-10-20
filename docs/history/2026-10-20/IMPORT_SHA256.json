@@ -1,0 +1,18 @@
+{
+  "Titan_Independent_Qualification_2026-10-20.zip": {
+    "bytes": 513688,
+    "sha256": "78d67644ea441c2f7ca18718ce5b71bf84622dc895842a0f07d6c9bb9b907057"
+  },
+  "Titan_Independent_Qualification_Report.md": {
+    "bytes": 22956,
+    "sha256": "9e6fcb555e6c234513cce0aaa7addb3fab34785061db24cbfee79ff3fb3e12ca"
+  },
+  "PACKAGE_SHA256.json": {
+    "bytes": 15014,
+    "sha256": "25325f3fd9cc33a0d1f6149d57dc0361173d3e3cb557ea2cdf992796227a2345"
+  },
+  "audit-revision-manifest.json": {
+    "bytes": 1055,
+    "sha256": "7ac2cbab9e27e92fd706dbea58f9cdfe6d6cf979301bc83b0275dc1328967ed9"
+  }
+}

@@ -1,0 +1,2 @@
+# Preserve dated evidence exactly across Windows and Linux checkouts.
+/docs/history/** -text

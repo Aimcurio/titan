@@ -8,11 +8,17 @@ The original baseline is `08328274bed440e8ba0c1747a9984bab21c1a740`. The complet
 
 `main` represents the existing fixture development baseline. `completion/20261018` is an unqualified development candidate. A branch name, source upload, historical review, or GitHub repository is not release acceptance or operational authority.
 
+## Development-history supplement — October 20, 2026
+
+The initial publication described below is retained as a historical record. A later documentation-only update imports the [independent qualification report and complete raw evidence ZIP](docs/history/2026-10-20/README.md), a supplied blocked-remediation handoff, and development tracking pages. The raw qualification evidence in that ZIP is now archived in this repository; other historical campaign inputs, the original completion ledger, companion source histories, and architecture/Phase-1 packages remain external or unrecovered. See [STATUS.md](STATUS.md) and [DEVELOPMENT_HISTORY.md](DEVELOPMENT_HISTORY.md).
+
+This supplement saves development evidence and changes no implementation, tests, lockfiles, original source history, or completion-branch identity. The report's immutable original statements describe its earlier execution context. Later authorization to publish this development record is separate from release, promotion, and operational authority.
+
 ## Publication audit scope
 
 Before remote publication, verify all reachable history, including deleted file versions. The local preparation inspected 10 original commits and 57 unique historical blobs. A targeted credential-pattern scan found no credential matches; manual inspection identified machine-specific fixture paths and a campaign checkpoint location. Those paths are disclosed historical implementation metadata, not credentials. They remain in immutable history; no claim is made that the repository has been stripped of every local path. Removing them from earlier commits would change source identity and require an explicit history-rewrite decision.
 
-Build products, dependency caches, raw external evidence/logs, local control records, original architecture/Phase-1 packages, and the five companion repositories are outside the Titan publication. The baseline's absolute paths also limit clean-machine reproduction. No proprietary or local path/Git dependency appears in Titan's Cargo manifests or lockfile; dependencies are registry packages, with bundled SQLite selected. This is not a dependency license or supply-chain qualification.
+At the initial source publication, build products, dependency caches, raw external evidence/logs, local control records, original architecture/Phase-1 packages, and the five companion repositories were outside the Titan publication. The later development-history supplement above identifies the qualification evidence now archived here. The baseline's absolute paths also limit clean-machine reproduction. No proprietary or local path/Git dependency appears in Titan's Cargo manifests or lockfile; dependencies are registry packages, with bundled SQLite selected. This is not a dependency license or supply-chain qualification.
 
 ## Separate companion histories
 
@@ -26,7 +32,7 @@ These exact candidates were reconciled to the October 20 source manifest. They a
 | learning-trace | `fbd7ee6cc1e1e0217879ffe6df808f2c3374b3e0` | `84018eec16714733423b8266d1bc5d1738a51758` |
 | flight-recorder | `8bae95274141bc94681b8675d41d049163b040ec` | `260e80823c907da1e19cdc270b611eeb227c122b` |
 
-The historical completion ledger and raw evidence remain external. Its reported passes apply only to their stated test scope. Learning Trace's role mismatch and all other release blockers remain open. The original campaign scripts require the corresponding external checkout layout and dependencies.
+The original historical completion ledger and other campaign inputs remain external; the later independent audit evidence is archived as described above. Its reported passes apply only to their stated test scope. Learning Trace's role mismatch and all other release blockers remain open. The original campaign scripts require the corresponding external checkout layout and dependencies.
 
 ## Verification requirement
 

@@ -4,6 +4,12 @@ Titan Forward is a Rust library for fixture-only authority records, admission, b
 
 This branch preserves the existing canonical Titan Forward source at `08328274bed440e8ba0c1747a9984bab21c1a740`. The older Projects mirror ends at F06; F07 already exists in this source history. Publication does not independently qualify or accept F07.
 
+## Current development record
+
+**Titan is under construction and NOT RELEASE QUALIFIED.** Start with [current status](STATUS.md) for the open Q01–Q08 findings and next work, [development history](DEVELOPMENT_HISTORY.md) for saved milestones and blocked attempts, and [the original October 20 audit and evidence](docs/history/2026-10-20/README.md) for the detailed qualification record.
+
+This default branch preserves the earlier baseline source. The newer implementation candidate is on [`completion/20261018`](https://github.com/Aimcurio/titan/tree/completion/20261018); its original published commit remains `2be4dfb9b51e1d88c6d0e5f603838d5bed3abfa5`. The documentation update does not merge that implementation into this branch. See [how development changes are saved and undone](docs/HISTORY_WORKFLOW.md).
+
 ## Build and test
 
 Use Rust 1.97.1 (selected by `rust-toolchain.toml`) and a working native C compiler for bundled SQLite. On Windows, use a Rust/MSVC development shell with the Visual Studio C++ tools available. Dependencies are pinned in `Cargo.lock`.
@@ -20,7 +26,7 @@ The companion scripts `tools/verify_all.py` and `tools/tool_flight.py` on `compl
 
 ## Qualification and authority
 
-**NOT RELEASE QUALIFIED.** The October 20 completion ledger records 281 Titan tests passed and four Windows link/junction setup failures. Those are prior implementation-agent results, not a new acceptance run for this publication. Independent qualification, portable installation, browser behavior, authenticated provenance, concurrent filesystem protection, complete process-tree containment, and full five-tool integration remain unverified or blocked. Learning Trace currently assesses learners and does not implement a software-decision journal. F08 and operational Root work remain separately gated.
+**NOT RELEASE QUALIFIED.** The original [October 20 independent qualification report](docs/history/2026-10-20/Titan_Independent_Qualification_Report.md) records confirmed hard-link acceptance, recorder evidence loss, and descendant containment failures, plus unresolved provenance, coverage, repeatability, formatting and platform gates. A subsequent remediation attempt was blocked by its runtime and produced no fixes. The earlier ledger's 281 passes and four Windows setup failures are historical implementation results, not the latest acceptance conclusion. Full five-tool integration remains blocked by Learning Trace's learner-assessment role mismatch; browser verification, F08, and operational Root remain separately gated. See [STATUS.md](STATUS.md) for the current development record.
 
 Phase-1 is a separate architecture package with `implementation_authorized:false`; it is not included here. Fixture authority does not confer operational authority. Publishing this source authorizes no production release, enrollment, deployment, candidate promotion, or Phase-1 activation.
 

@@ -1,0 +1,38 @@
+[
+  {
+    "component": "evidence-forge",
+    "commit": "6db96efc919bf82d8c449d22856497b132759827",
+    "tree": "314e76d8529b02e9297b1749debacb0408c865f4",
+    "status": ""
+  },
+  {
+    "component": "flight-recorder",
+    "commit": "8bae95274141bc94681b8675d41d049163b040ec",
+    "tree": "260e80823c907da1e19cdc270b611eeb227c122b",
+    "status": ""
+  },
+  {
+    "component": "learning-trace",
+    "commit": "fbd7ee6cc1e1e0217879ffe6df808f2c3374b3e0",
+    "tree": "84018eec16714733423b8266d1bc5d1738a51758",
+    "status": ""
+  },
+  {
+    "component": "ruleforge-engine",
+    "commit": "537689eadacbfe6ec0e6821d140102371f63d5bc",
+    "tree": "021f834ae1563576da3a51a8f81c6cac5d46310e",
+    "status": ""
+  },
+  {
+    "component": "spc-remediation",
+    "commit": "bf49ca990ffcbd89ff2d95b4b92369ab041ca8b3",
+    "tree": "061debc49e3795b6a8a44091c41872a66ba5b21a",
+    "status": ""
+  },
+  {
+    "component": "titan-forward",
+    "commit": "2be4dfb9b51e1d88c6d0e5f603838d5bed3abfa5",
+    "tree": "33b390290c9031a66d7a4569767d92c1ac46507c",
+    "status": ""
+  }
+]
