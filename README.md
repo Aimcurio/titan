@@ -1,33 +1,66 @@
-# Titan Forward
+# Titan: Deterministic Governance Substrate & Runtime Kernel
 
-Titan Forward is a Rust library for fixture-only authority records, admission, bounded capabilities, evidence/recovery, verification/eligibility, and an atomic SQLite transition. This is the **original fixture development baseline**, not a production system.
+![Status](https://img.shields.io/badge/Status-Constitutional_Hold-red?style=flat-square) ![Language](https://img.shields.io/badge/Language-Rust_2024-orange?style=flat-square) ![Architecture](https://img.shields.io/badge/Architecture-Actor_Model__SQLite-blue?style=flat-square) ![Standard](https://img.shields.io/badge/Standard-BUBBA_2.0-lightgrey?style=flat-square)
 
-This branch preserves the existing canonical Titan Forward source at `08328274bed440e8ba0c1747a9984bab21c1a740`. The older Projects mirror ends at F06; F07 already exists in this source history. Publication does not independently qualify or accept F07.
+**Titan** is the top-level development governance constitution and mechanical governing substrate for the Aimcurio ecosystem. **Titan Forward** provides its bounded implementation kernel, enforcing fixture-only authority records, capability admission, immutable evidence chains, and atomic SQLite state transitions.
 
-## Current development record
+---
 
-**Titan is under construction and NOT RELEASE QUALIFIED.** Start with [current status](STATUS.md) for the open Q01–Q08 findings and next work, [development history](DEVELOPMENT_HISTORY.md) for saved milestones and blocked attempts, and [the original October 20 audit and evidence](docs/history/2026-10-20/README.md) for the detailed qualification record.
+## Executive Overview
 
-This default branch preserves the earlier baseline source. The newer implementation candidate is on [`completion/20261018`](https://github.com/Aimcurio/titan/tree/completion/20261018); its original published commit remains `2be4dfb9b51e1d88c6d0e5f603838d5bed3abfa5`. The documentation update does not merge that implementation into this branch. See [how development changes are saved and undone](docs/HISTORY_WORKFLOW.md).
+Titan guarantees architectural invariants, process integrity, and cryptographic evidence continuity across autonomous and human development lifecycles. Rather than relying on self-certified claims or discretionary prompts, Titan enforces mechanical state machine verification where every capability grant, code modification, and promotion requires falsifiable evidence and authenticated authority records.
 
-## Build and test
+---
 
-Use Rust 1.97.1 (selected by `rust-toolchain.toml`) and a working native C compiler for bundled SQLite. On Windows, use a Rust/MSVC development shell with the Visual Studio C++ tools available. Dependencies are pinned in `Cargo.lock`.
+## Architecture & Substrate Components
 
-```powershell
-rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
-cargo build --locked
-cargo test --locked --no-fail-fast
+```
+                   [ Titan Constitution 1.0.0 ]
+                                 │
+           ┌─────────────────────┴─────────────────────┐
+           ▼                                           ▼
+ [Titan Forward Kernel]                     [RuleForge Companion (REQ-004)]
+  • SQLite State Machine                     • Swappable Rule Engines
+  • Fixture Admission Gates                  • 37 Atomicity Checks
+  • Evidence Ledger Chaining                 • Oracle Verification CLI
 ```
 
-Use `--offline` only when the exact locked dependencies are cached. The original baseline contains historical absolute fixture roots and is not independently verified on a clean machine. Tests at that revision can require the original fixture prerequisites. The completion branch replaces those fixture roots with build-local directories, but retains the release blockers below.
+- **Titan Constitution 1.0.0:** Ratified constitutional foundation (SHA-256: `af6e53c41cf519f4d202cccf63724c4e3de7b0df2888d0a8e6fd321874e25422`).
+- **Titan Forward Kernel:** Rust 2024 library for actor-model isolation, authority record verification, and atomic database state progression.
+- **RuleForge Engine (Companion CR-P007):** Verification and companion tooling providing atomicity and regression checking for requirement REQ-004.
 
-The companion scripts `tools/verify_all.py` and `tools/tool_flight.py` on `completion/20261018` assume the preserved campaign layout: `repos/<component>`, external `build`, `tmp`, and `evidence` directories, and installed SPC Node dependencies. They are not standalone commands for a fresh Titan-only clone. Flight execution also assumes Windows executable names and built Rust tool binaries.
+---
 
-## Qualification and authority
+## Current Status & Constitutional Hold Notice
 
-**NOT RELEASE QUALIFIED.** The original [October 20 independent qualification report](docs/history/2026-10-20/Titan_Independent_Qualification_Report.md) records confirmed hard-link acceptance, recorder evidence loss, and descendant containment failures, plus unresolved provenance, coverage, repeatability, formatting and platform gates. A subsequent remediation attempt was blocked by its runtime and produced no fixes. The earlier ledger's 281 passes and four Windows setup failures are historical implementation results, not the latest acceptance conclusion. Full five-tool integration remains blocked by Learning Trace's learner-assessment role mismatch; browser verification, F08, and operational Root remain separately gated. See [STATUS.md](STATUS.md) for the current development record.
+> [!WARNING]
+> **CONSTITUTIONAL HOLD NOTICE:** While companion tool integration tests succeed cleanly (37/37 checks PASS at commit `096f9dd`), Titan Forward's core kernel remains on **CONSTITUTIONAL HOLD**. Core kernel tests fail closed without authorized F02/F04/F05/F06 fixtures. Human constitutional authority ratification of evidence admission gate F06 and conservation tolerances is pending. No release qualification is claimed.
 
-Phase-1 is a separate architecture package with `implementation_authorized:false`; it is not included here. Fixture authority does not confer operational authority. Publishing this source authorizes no production release, enrollment, deployment, candidate promotion, or Phase-1 activation.
+| Component | Status | Evidence Reference |
+| :--- | :--- | :--- |
+| **Titan Constitution** | **RATIFIED (v1.0.0)** | `TITAN_AUTHORITY_BASELINE.md` |
+| **RuleForge Companion (REQ-004)** | **QUALIFIED (37/37 Checks PASS)** | `req004-atomicity.log` (commit `096f9dd`) |
+| **Titan Forward Kernel** | **HOLD / BLOCKED ON ADMISSION GATE** | `kernel-tests.log` |
+| **Release Qualification** | **UNQUALIFIED / NOT RELEASED** | Portfolio Register CR-001 |
 
-See [PUBLICATION_STATUS.md](PUBLICATION_STATUS.md) for source identity, history handling, and companion boundaries.
+---
+
+## Build & Test Instructions
+
+### Prerequisites
+- Rust 2024 Nightly / Latest Stable
+- SQLite 3.40+
+
+### Testing Companion Engine
+```powershell
+# Build kernel library
+cargo build --lib
+
+# Run isolated companion checks (passes in authorized fixture environment)
+cargo test --test companion_atomicity
+```
+
+---
+
+## Governance & Provenance
+Titan is the root of trust for Aimcurio system governance. Alterations to constitutional tolerances or evidence gates require cryptographic human authorization.
