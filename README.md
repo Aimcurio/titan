@@ -1,4 +1,21 @@
-# Titan Forward
+# Titan Forward: Deterministic Actor Runtime & Governance Kernel
+
+[![Status](https://img.shields.io/badge/Status-Constitutional_Hold-yellow?style=flat-square)](#)
+[![Tech](https://img.shields.io/badge/Tech-Rust_2024__SQLite-blue?style=flat-square)](#)
+[![Domain](https://img.shields.io/badge/Domain-Constitutional_Governance__Actor_Runtime-orange?style=flat-square)](#)
+[![Standard](https://img.shields.io/badge/Standard-BUBBA_2.0_Governance-purple?style=flat-square)](#)
+[![Tests](https://img.shields.io/badge/Tests-REQ--004%3A_37_PASS-brightgreen?style=flat-square)](#)
+
+> **Portfolio Classification:** Public Development Governance Substrate  
+> **Authoritative Root:** `E:\Pipeline\titan-forward` | **Canonical Spec:** `E:\overview\specs\titan.json`  
+> **Development Status:** **CONSTITUTIONAL HOLD** — Ratified Constitution 1.0.0; REQ-004 test suite 37/37 PASS; kernel fixtures pending before live production ratification.
+
+> [!CAUTION]
+> **CONSTITUTIONAL HOLD NOTICE:**  
+> Development on Titan Forward operates under a strict Constitutional Hold. Direct alterations to core state transition semantics are prohibited without ratified consensus and companion RuleForge test verification.
+
+---
+
 
 Titan Forward is a Rust library for fixture-only authority records, admission, bounded capabilities, evidence/recovery, verification/eligibility, and an atomic SQLite transition. This is the **original fixture development baseline**, not a production system.
 
